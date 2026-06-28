@@ -8,17 +8,17 @@ import { requireSiteAdminActor } from "@/lib/moderator-permissions"
 import { getSiteSettings } from "@/lib/site-settings"
 import { getVipLevel, isVipActive } from "@/lib/vip-status"
 
-
-
-
 const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 const DEFAULT_CODE_LENGTH = 8
 const MAX_INVITE_CODE_PURCHASE_COUNT = 10
 const MAX_UNUSED_INVITE_CODE_HOLDINGS = 100
 
+// 【修复1】补充sourceSite、expiresAt类型
 export interface InviteCodeItem {
   id: string
   code: string
+  sourceSite: string | null
+  expiresAt: string | null
   createdAt: string
   createdByUsername: string | null
   usedAt: string | null
@@ -30,6 +30,8 @@ export interface InviteCodePageData {
   items: Array<{
     id: string
     code: string
+    sourceSite: string | null
+    expiresAt: string | null
     createdAt: string
     usedAt: string | null
     usedByUsername: string | null
@@ -67,8 +69,14 @@ export async function generateUniqueInviteCode(length = DEFAULT_CODE_LENGTH) {
   apiError(500, "邀请码生成失败，请重试")
 }
 
-
-export async function createInviteCodes(input: { count: number; createdById?: number | null; note?: string | null }) {
+// 【修复2】新增sourceSite、expiresAt入参，同步传给批量插入
+export async function createInviteCodes(input: {
+  count: number;
+  createdById?: number | null;
+  note?: string | null;
+  sourceSite?: string | null;
+  expiresAt?: Date | null;
+}) {
   await ensureAdminActorPermission(
     await requireSiteAdminActor(),
     "admin.operations.manage",
@@ -76,41 +84,89 @@ export async function createInviteCodes(input: { count: number; createdById?: nu
   )
 
   const count = Math.min(100, Math.max(1, Math.trunc(input.count)))
-  const rows = [] as { code: string; createdById?: number | null; note?: string | null }[]
+  const rows = [] as {
+    code: string;
+    createdById?: number | null;
+    note?: string | null;
+    sourceSite?: string | null;
+    expiresAt?: Date | null;
+  }[]
 
   for (let index = 0; index < count; index += 1) {
     rows.push({
       code: await generateUniqueInviteCode(),
       createdById: input.createdById ?? null,
       note: input.note?.trim() || null,
+      sourceSite: input.sourceSite?.trim() || null,
+      expiresAt: input.expiresAt ?? null,
     })
   }
 
   await createInviteCodesBatch(rows)
 
   return findInviteCodesByCodes(rows.map((item) => item.code))
-
 }
 
-export async function getInviteCodeList(limit = 100): Promise<InviteCodeItem[]> {
+// 【修复3】读取数据库新增字段sourceSite、expiresAt并映射到返回结构
+export async function getInviteCodeList(limit = 100, sourceSearch?: string): Promise<InviteCodeItem[]> {
   await ensureAdminActorPermission(
     await requireSiteAdminActor(),
     "admin.operations.manage",
     "无权限访问邀请码",
   )
 
-  const rows = await findInviteCodeList(limit)
-
+  const rows = await findInviteCodeList(limit, sourceSearch)
 
   return rows.map((row) => ({
     id: row.id,
     code: row.code,
+    sourceSite: row.sourceSite ?? null,
+    expiresAt: row.expiresAt?.toISOString() ?? null,
     createdAt: row.createdAt.toISOString(),
     createdByUsername: row.createdBy?.username ?? null,
     usedAt: row.usedAt?.toISOString() ?? null,
     usedByUsername: row.usedBy?.username ?? null,
     note: row.note,
   }))
+}
+
+// 【新增】分页+来源站点模糊搜索函数，适配admin/api接口GET分页查询
+export async function getInviteCodeAdminPage(options: {
+  page: number;
+  pageSize: number;
+  sourceSite?: string;
+}) {
+  await ensureAdminActorPermission(
+    await requireSiteAdminActor(),
+    "admin.operations.manage",
+    "无权限访问邀请码",
+  )
+  const page = Math.max(1, options.page)
+  const pageSize = Math.min(100, Math.max(1, options.pageSize))
+  const { total, rows } = await findInviteCodeListPaginated(page, pageSize, options.sourceSite)
+  const totalPages = Math.ceil(total / pageSize)
+
+  const items = rows.map((row) => ({
+    id: row.id,
+    code: row.code,
+    sourceSite: row.sourceSite ?? null,
+    expiresAt: row.expiresAt?.toISOString() ?? null,
+    createdAt: row.createdAt.toISOString(),
+    usedAt: row.usedAt?.toISOString() ?? null,
+    usedByUsername: row.usedBy?.username ?? null,
+  }))
+
+  return {
+    items,
+    pagination: {
+      page,
+      pageSize,
+      total,
+      totalPages,
+      hasPrevPage: page > 1,
+      hasNextPage: page < totalPages,
+    },
+  } satisfies InviteCodePageData
 }
 
 export async function deleteInviteCodes(input: { scope: "single" | "used" | "unused" | "all"; id?: string }) {
@@ -151,6 +207,8 @@ export async function getPurchasedInviteCodePage(userId: number, options?: { pag
     items: rows.map((row) => ({
       id: row.id,
       code: row.code,
+      sourceSite: row.sourceSite ?? null,
+      expiresAt: row.expiresAt?.toISOString() ?? null,
       createdAt: row.createdAt.toISOString(),
       usedAt: row.usedAt?.toISOString() ?? null,
       usedByUsername: row.usedBy?.username ?? null,
@@ -207,7 +265,6 @@ export async function resolveInviter(input: { inviterUsername?: string; inviteCo
   if (inviterUsername && !inviter) {
     apiError(404, "邀请人不存在")
   }
-
 
   return {
     inviter,
@@ -277,5 +334,4 @@ export async function purchaseInviteCode(userId: number, options?: { count?: num
     pointName: settings.pointName,
     codes,
   })
-
 }
