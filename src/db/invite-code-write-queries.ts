@@ -43,11 +43,14 @@ export async function purchaseInviteCodeTransaction(params: {
       }
     }
 
+    // 新增 sourceSite、expiresAt，购买生成的邀请码固定为空
     const inviteCodes = await Promise.all(params.codes.map((code) => tx.inviteCode.create({
       data: {
         code,
         createdById: latestUser.id,
         note: "积分购买",
+        sourceSite: null,
+        expiresAt: null,
       },
     })))
 
