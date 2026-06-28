@@ -2827,6 +2827,7 @@ model InviteCode {
   usedById    Int?
   usedAt      DateTime? @db.Timestamptz(3)
   expiresAt   DateTime? @db.Timestamptz(3)
+  sourceSite  String?
   note        String?
   createdAt   DateTime  @default(now()) @db.Timestamptz(3)
   updatedAt   DateTime  @updatedAt @db.Timestamptz(3)
@@ -2837,7 +2838,6 @@ model InviteCode {
   @@index([usedById])
   @@index([createdAt])
 }
-
 model RedeemCode {
   id                String    @id @default(cuid())
   code              String    @unique
