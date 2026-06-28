@@ -39,7 +39,7 @@ export async function GET(req: NextRequest) {
   });
 }
 
-// 批量生成邀请码接口
+// 批量生成邀请码接口（携带sourceSite、expiresAt、note参数）
 export async function POST(req: NextRequest) {
   const session = await getAdminSession();
   if (!session) return NextResponse.json({ error: "无管理员权限" }, { status: 401 });
