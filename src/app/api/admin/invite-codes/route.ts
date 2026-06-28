@@ -1,55 +1,69 @@
-import { apiError, apiSuccess, createAdminRouteHandler, readJsonBody, readOptionalStringField } from "@/lib/api-route"
-import { createInviteCodes, deleteInviteCodes, getInviteCodeList } from "@/lib/invite-codes"
+import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { generateInviteCodes } from "@/lib/invite-codes";
+import { getAdminSession } from "@/lib/auth";
 
-type DeleteScope = "single" | "used" | "unused" | "all"
+// 分页查询邀请码，支持sourceSite模糊筛选
+export async function GET(req: NextRequest) {
+  const session = await getAdminSession();
+  if (!session) return NextResponse.json({ error: "无管理员权限" }, { status: 401 });
 
-function readDeleteScope(value: unknown): DeleteScope {
-  if (value === "single" || value === "used" || value === "unused" || value === "all") {
-    return value
-  }
+  const { searchParams } = new URL(req.url);
+  const page = parseInt(searchParams.get("page") || "1");
+  const pageSize = parseInt(searchParams.get("pageSize") || "20");
+  const sourceSite = searchParams.get("sourceSite") || undefined;
 
-  apiError(400, "删除范围不正确")
+  const where: Record<string, any> = {};
+  if (sourceSite) where.sourceSite = { contains: sourceSite, mode: "insensitive" };
+
+  const [list, total] = await Promise.all([
+    prisma.inviteCode.findMany({
+      where,
+      include: {
+        createdBy: { select: { id, username, nickname } },
+        usedBy: { select: { id, username, nickname } }
+      },
+      orderBy: { createdAt: "desc" },
+      skip: (page - 1) * pageSize,
+      take: pageSize,
+    }),
+    prisma.inviteCode.count({ where }),
+  ]);
+
+  return NextResponse.json({
+    list,
+    total,
+    page,
+    pageSize,
+    totalPage: Math.ceil(total / pageSize),
+  });
 }
 
-export const GET = createAdminRouteHandler(async () => {
-  const inviteCodes = await getInviteCodeList()
-  return apiSuccess(inviteCodes)
-}, {
-  errorMessage: "读取邀请码失败",
-  logPrefix: "[api/admin/invite-codes:GET] unexpected error",
-  unauthorizedMessage: "无权访问",
-  permission: "admin.operations.manage",
-})
+// 批量生成邀请码接口
+export async function POST(req: NextRequest) {
+  const session = await getAdminSession();
+  if (!session) return NextResponse.json({ error: "无管理员权限" }, { status: 401 });
 
-export const POST = createAdminRouteHandler(async ({ request, adminUser }) => {
-  const body = await readJsonBody(request)
-  const count = Math.max(1, Math.min(100, Number(body.count ?? 1) || 1))
-  const note = readOptionalStringField(body, "note")
+  const { count, expiresAt, sourceSite, note } = await req.json();
+  if (!count || count < 1) return NextResponse.json({ error: "生成数量必须大于0" }, { status: 400 });
 
-  const rows = await createInviteCodes({
+  const codes = await generateInviteCodes({
     count,
-    createdById: adminUser.id,
-    note,
-  })
+    creatorId: session.userId,
+    expiresAt: expiresAt ? new Date(expiresAt) : null,
+    sourceSite: sourceSite || null,
+    note: note || null,
+  });
 
-  return apiSuccess(rows, `已生成 ${rows.length} 个邀请码`)
-}, {
-  errorMessage: "生成邀请码失败",
-  logPrefix: "[api/admin/invite-codes:POST] unexpected error",
-  unauthorizedMessage: "无权操作",
-  permission: "admin.operations.manage",
-})
+  return NextResponse.json({ success: true, codes });
+}
 
-export const DELETE = createAdminRouteHandler(async ({ request }) => {
-  const body = await readJsonBody(request)
-  const scope = readDeleteScope(body.scope)
-  const id = typeof body.id === "string" ? body.id : undefined
-  const deletedCount = await deleteInviteCodes({ scope, id })
+// 删除单条邀请码
+export async function DELETE(req: NextRequest) {
+  const session = await getAdminSession();
+  if (!session) return NextResponse.json({ error: "无管理员权限" }, { status: 401 });
 
-  return apiSuccess({ deletedCount }, `已删除 ${deletedCount} 个邀请码`)
-}, {
-  errorMessage: "删除邀请码失败",
-  logPrefix: "[api/admin/invite-codes:DELETE] unexpected error",
-  unauthorizedMessage: "无权操作",
-  permission: "admin.operations.manage",
-})
+  const { id } = await req.json();
+  await prisma.inviteCode.delete({ where: { id } });
+  return NextResponse.json({ success: true });
+}
