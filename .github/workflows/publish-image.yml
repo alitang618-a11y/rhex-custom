@@ -35,13 +35,13 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository }}
+          images: ghcr.io/alitang618-a11y/rhex-custom
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=ref,event=tag
             type=sha
           labels: |
-            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.source=https://github.com/alitang618-a11y/rhex-custom
 
       - name: Build and push image
         uses: docker/build-push-action@v6
@@ -53,5 +53,8 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             NEXT_DEPLOYMENT_ID=${{ github.sha }}
+            PNPM_REGISTRY=https://registry.npmmirror.com
+          env:
+            NODE_OPTIONS: --max-old-space-size=4096
           cache-from: type=gha
           cache-to: type=gha,mode=max
